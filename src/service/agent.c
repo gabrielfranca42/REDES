@@ -31,6 +31,15 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
             
             // IMPORTANTE: Aqui é onde você implementaria o código para mandar 
             // essa tecla para o `service.exe` conectando no localhost:4444.
+            void SendMessageToService(const char *msg);
+
+char msg[64];
+snprintf(msg, sizeof(msg), "EVENTO_X");
+
+SendMessageToService(msg);
+           
+
+           }
         }
     }
     
