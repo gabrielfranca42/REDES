@@ -9,6 +9,9 @@
 // Inclui a funcao de captura de tela (CapturarTela)
 #include "tela.h"
 
+// Inclui as funcoes de injecao de mouse e teclado (SendInput)
+#include "input.h"
+
 // Vincula a biblioteca Winsock (necessária para utilizar sockets no Windows)
 #pragma comment(lib, "ws2_32.lib")
 
@@ -200,6 +203,37 @@ DWORD WINAPI HandleClientThread(LPVOID lpParam) {
                 } else {
                     ws_send_text(ClientSocket, "[SYSTEM] Erro ao capturar a tela.");
                 }
+            // Comandos de controle remoto: MOUSE_CLICK x y
+            } else if (strncmp((char *)payload, "MOUSE_CLICK ", 12) == 0) {
+                int x, y;
+                if (sscanf((char *)payload + 12, "%d %d", &x, &y) == 2) {
+                    InjetarMouseClick(x, y);
+                    ws_send_text(ClientSocket, "[SYSTEM] Click executado.");
+                }
+
+            // MOUSE_RCLICK x y
+            } else if (strncmp((char *)payload, "MOUSE_RCLICK ", 13) == 0) {
+                int x, y;
+                if (sscanf((char *)payload + 13, "%d %d", &x, &y) == 2) {
+                    InjetarMouseRightClick(x, y);
+                    ws_send_text(ClientSocket, "[SYSTEM] Right-click executado.");
+                }
+
+            // MOUSE_MOVE x y
+            } else if (strncmp((char *)payload, "MOUSE_MOVE ", 11) == 0) {
+                int x, y;
+                if (sscanf((char *)payload + 11, "%d %d", &x, &y) == 2) {
+                    InjetarMouseMove(x, y);
+                }
+
+            // KEY_PRESS vkCode
+            } else if (strncmp((char *)payload, "KEY_PRESS ", 10) == 0) {
+                int vk;
+                if (sscanf((char *)payload + 10, "%d", &vk) == 1) {
+                    InjetarTecla((WORD)vk);
+                    ws_send_text(ClientSocket, "[SYSTEM] Tecla executada.");
+                }
+
             } else {
                 // Mensagem normal - responde com eco (logica original preservada)
                 char response[BUFFER_SIZE + 64];

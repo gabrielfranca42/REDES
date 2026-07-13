@@ -99,12 +99,17 @@
             padding: 10px;
             max-width: 95vw;
             overflow: auto;
+            position: relative;
         }
 
         #screenshot {
             max-width: 100%;
             display: none;
             border-radius: 4px;
+            cursor: crosshair;
+            /* Impede que o navegador arraste a imagem */
+            user-select: none;
+            -webkit-user-drag: none;
         }
 
         #placeholder {
@@ -112,6 +117,20 @@
             text-align: center;
             padding: 100px 40px;
             font-size: 1.1rem;
+        }
+
+        .info-bar {
+            display: flex;
+            gap: 15px;
+            margin-top: 10px;
+            font-size: 0.75rem;
+            color: #666;
+        }
+
+        .info-bar span {
+            background: #16213e;
+            padding: 3px 8px;
+            border-radius: 4px;
         }
 
         .log {
@@ -146,6 +165,13 @@
         .msg-entry.info { color: #00d4ff; }
         .msg-entry.success { color: #00ff88; }
         .msg-entry.error { color: #ff4444; }
+
+        .keyboard-hint {
+            margin-top: 8px;
+            font-size: 0.75rem;
+            color: #555;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -158,12 +184,21 @@
         <button id="btnDesconectar" class="danger" onclick="desconectar()" disabled>Desconectar</button>
         <button id="btnCapturar" onclick="capturarTela()" disabled>📸 Capturar Tela</button>
         <button id="btnStream" onclick="toggleStream()" disabled>▶️ Iniciar Stream</button>
+        <button id="btnControle" onclick="toggleControle()" disabled>🖱️ Ativar Controle</button>
     </div>
 
-    <div class="viewer">
+    <div class="viewer" id="viewer">
         <p id="placeholder">Conecte ao serviço e clique em "Capturar Tela" para ver o screenshot.</p>
         <img id="screenshot" alt="Screenshot da tela remota">
     </div>
+
+    <div class="info-bar">
+        <span id="coordInfo">Mouse: --</span>
+        <span id="fpsInfo">FPS: --</span>
+        <span id="controleInfo">Controle: Desativado</span>
+    </div>
+
+    <p class="keyboard-hint">Com o controle ativo, clique na imagem e use o teclado para enviar teclas ao computador remoto.</p>
 
     <div class="log">
         <h3>Log de mensagens:</h3>
@@ -173,7 +208,15 @@
     <script>
         let ws = null;
         let streaming = false;
-        let streamInterval = null;
+        let controleAtivo = false;
+
+        // Resolução real da tela remota (será atualizada quando recebermos a primeira imagem)
+        let telaRealW = 1920;
+        let telaRealH = 1080;
+
+        // Contadores de FPS
+        let frameCount = 0;
+        let lastFpsTime = Date.now();
 
         function log(texto, tipo = '') {
             const div = document.getElementById('messages');
@@ -182,12 +225,27 @@
             entry.textContent = `[${new Date().toLocaleTimeString()}] ${texto}`;
             div.appendChild(entry);
             div.scrollTop = div.scrollHeight;
+            // Limita a 100 mensagens para não travar
+            while (div.children.length > 100) div.removeChild(div.firstChild);
+        }
+
+        // Converte coordenadas do clique na imagem para coordenadas reais da tela remota
+        function imgParaTela(imgElement, clickX, clickY) {
+            const rect = imgElement.getBoundingClientRect();
+            // Posição relativa dentro da imagem (0.0 a 1.0)
+            const relX = clickX / rect.width;
+            const relY = clickY / rect.height;
+            // Converte para coordenadas absolutas da tela remota
+            return {
+                x: Math.round(relX * telaRealW),
+                y: Math.round(relY * telaRealH)
+            };
         }
 
         function conectar() {
             const porta = 4444;
             ws = new WebSocket(`ws://localhost:${porta}`);
-            ws.binaryType = 'blob'; // Importante: receber dados binários como Blob
+            ws.binaryType = 'blob';
 
             ws.onopen = function () {
                 document.getElementById('status').className = 'connected';
@@ -196,31 +254,45 @@
                 document.getElementById('btnDesconectar').disabled = false;
                 document.getElementById('btnCapturar').disabled = false;
                 document.getElementById('btnStream').disabled = false;
+                document.getElementById('btnControle').disabled = false;
                 log('Conexão WebSocket estabelecida!', 'success');
             };
 
             ws.onmessage = function (event) {
                 if (event.data instanceof Blob) {
-                    // Dados binários recebidos = imagem BMP
                     const url = URL.createObjectURL(event.data);
                     const img = document.getElementById('screenshot');
                     
-                    // Libera a URL anterior para não vazar memória
                     if (img.src && img.src.startsWith('blob:')) {
                         URL.revokeObjectURL(img.src);
                     }
 
+                    img.onload = function () {
+                        // Atualiza a resolução real baseada na imagem recebida
+                        telaRealW = img.naturalWidth;
+                        telaRealH = img.naturalHeight;
+
+                        // Calcula FPS
+                        frameCount++;
+                        const now = Date.now();
+                        if (now - lastFpsTime >= 1000) {
+                            document.getElementById('fpsInfo').textContent = `FPS: ${frameCount}`;
+                            frameCount = 0;
+                            lastFpsTime = now;
+                        }
+                    };
+
                     img.src = url;
                     img.style.display = 'block';
                     document.getElementById('placeholder').style.display = 'none';
-                    log(`Screenshot recebido! (${(event.data.size / 1024).toFixed(0)} KB)`, 'success');
 
-                    // Se estiver em modo stream, pede o próximo frame
+                    const sizeKB = (event.data.size / 1024).toFixed(0);
+                    log(`Frame JPEG recebido: ${sizeKB} KB`, 'success');
+
                     if (streaming) {
                         ws.send('CAPTURAR_TELA');
                     }
                 } else {
-                    // Mensagem de texto normal
                     log('Servidor: ' + event.data, 'info');
                 }
             };
@@ -237,6 +309,7 @@
 
         function desconectar() {
             if (streaming) toggleStream();
+            if (controleAtivo) toggleControle();
             if (ws) ws.close();
         }
 
@@ -253,8 +326,7 @@
                 streaming = true;
                 btn.textContent = '⏹️ Parar Stream';
                 btn.classList.add('danger');
-                log('Stream iniciado! Capturando continuamente...', 'success');
-                // Envia o primeiro pedido, os próximos serão disparados pelo onmessage
+                log('Stream iniciado!', 'success');
                 ws.send('CAPTURAR_TELA');
             } else {
                 streaming = false;
@@ -264,15 +336,95 @@
             }
         }
 
+        function toggleControle() {
+            const btn = document.getElementById('btnControle');
+            const info = document.getElementById('controleInfo');
+            if (!controleAtivo) {
+                controleAtivo = true;
+                btn.textContent = '🖱️ Desativar Controle';
+                btn.classList.add('danger');
+                info.textContent = 'Controle: ATIVO';
+                info.style.color = '#00ff88';
+                log('Controle remoto ATIVADO. Clique na imagem para interagir.', 'success');
+            } else {
+                controleAtivo = false;
+                btn.textContent = '🖱️ Ativar Controle';
+                btn.classList.remove('danger');
+                info.textContent = 'Controle: Desativado';
+                info.style.color = '#666';
+                log('Controle remoto desativado.', 'info');
+            }
+        }
+
+        // ============================================================
+        // Eventos de Mouse sobre a imagem
+        // ============================================================
+        const img = document.getElementById('screenshot');
+
+        // Clique esquerdo
+        img.addEventListener('click', function (e) {
+            if (!controleAtivo || !ws) return;
+            const rect = this.getBoundingClientRect();
+            const coords = imgParaTela(this, e.clientX - rect.left, e.clientY - rect.top);
+            ws.send(`MOUSE_CLICK ${coords.x} ${coords.y}`);
+            log(`Click em (${coords.x}, ${coords.y})`, 'info');
+        });
+
+        // Clique direito
+        img.addEventListener('contextmenu', function (e) {
+            e.preventDefault(); // Impede o menu de contexto do navegador
+            if (!controleAtivo || !ws) return;
+            const rect = this.getBoundingClientRect();
+            const coords = imgParaTela(this, e.clientX - rect.left, e.clientY - rect.top);
+            ws.send(`MOUSE_RCLICK ${coords.x} ${coords.y}`);
+            log(`Right-click em (${coords.x}, ${coords.y})`, 'info');
+        });
+
+        // Movimento do mouse (atualiza coordenadas no info bar)
+        img.addEventListener('mousemove', function (e) {
+            const rect = this.getBoundingClientRect();
+            const coords = imgParaTela(this, e.clientX - rect.left, e.clientY - rect.top);
+            document.getElementById('coordInfo').textContent = `Mouse: ${coords.x}, ${coords.y}`;
+
+            // Se o controle estiver ativo, envia o movimento para o servidor
+            // (Throttle: envia no máximo a cada 50ms para não inundar o socket)
+            if (controleAtivo && ws) {
+                if (!img._lastMove || Date.now() - img._lastMove > 50) {
+                    ws.send(`MOUSE_MOVE ${coords.x} ${coords.y}`);
+                    img._lastMove = Date.now();
+                }
+            }
+        });
+
+        // ============================================================
+        // Eventos de Teclado (quando o controle está ativo)
+        // ============================================================
+        document.addEventListener('keydown', function (e) {
+            if (!controleAtivo || !ws) return;
+
+            // Previne o comportamento padrão do navegador para não interferir
+            e.preventDefault();
+
+            // Envia o Virtual Key Code do Windows
+            // A propriedade e.keyCode do JavaScript corresponde ao VK_CODE do Windows
+            // para teclas comuns (letras, números, F1-F12, Enter, etc)
+            ws.send(`KEY_PRESS ${e.keyCode}`);
+        });
+
         function resetUI() {
             streaming = false;
+            controleAtivo = false;
             document.getElementById('status').className = 'disconnected';
             document.getElementById('status').textContent = '● Desconectado';
             document.getElementById('btnConectar').disabled = false;
             document.getElementById('btnDesconectar').disabled = true;
             document.getElementById('btnCapturar').disabled = true;
             document.getElementById('btnStream').disabled = true;
+            document.getElementById('btnControle').disabled = true;
             document.getElementById('btnStream').textContent = '▶️ Iniciar Stream';
+            document.getElementById('btnControle').textContent = '🖱️ Ativar Controle';
+            document.getElementById('controleInfo').textContent = 'Controle: Desativado';
+            document.getElementById('controleInfo').style.color = '#666';
         }
     </script>
 </body>
