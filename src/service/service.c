@@ -6,6 +6,9 @@
 // Inclui nossas funcoes de WebSocket (SHA-1, Base64, Handshake, Framing)
 #include "websocket.h"
 
+// Inclui a funcao de captura de tela (CapturarTela)
+#include "tela.h"
+
 // Vincula a biblioteca Winsock (necessária para utilizar sockets no Windows)
 #pragma comment(lib, "ws2_32.lib")
 
@@ -182,13 +185,23 @@ DWORD WINAPI HandleClientThread(LPVOID lpParam) {
         }
         
         if (opcode == WS_OPCODE_TEXT) {
-            // Mensagem de texto recebida - responde com eco
+            // Mensagem de texto recebida
             payload[payload_len] = '\0';
             
-            // Monta resposta: "[SYSTEM Echo] <mensagem original>"
-            char response[BUFFER_SIZE + 64];
-            snprintf(response, sizeof(response), "[SYSTEM Echo] %s", (char *)payload);
-            ws_send_text(ClientSocket, response);
+            // Verifica se o cliente enviou o comando de captura de tela
+            if (strcmp((char *)payload, "CAPTURAR_TELA") == 0) {
+                // Executa a captura de tela e salva como screenshot.bmp
+                if (CapturarTela()) {
+                    ws_send_text(ClientSocket, "[SYSTEM] Screenshot capturado com sucesso! Salvo como screenshot.bmp");
+                } else {
+                    ws_send_text(ClientSocket, "[SYSTEM] Erro ao capturar a tela.");
+                }
+            } else {
+                // Mensagem normal - responde com eco (logica original preservada)
+                char response[BUFFER_SIZE + 64];
+                snprintf(response, sizeof(response), "[SYSTEM Echo] %s", (char *)payload);
+                ws_send_text(ClientSocket, response);
+            }
         }
     }
     
