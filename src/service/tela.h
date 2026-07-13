@@ -3,16 +3,27 @@
 
 #include <windows.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 // ============================================================================
-// Função que captura a tela inteira e salva como screenshot.bmp
-// Retorna 1 em caso de sucesso, 0 em caso de falha.
-// Baseada na lógica do tela.c, encapsulada para uso pelo service.
+// Estrutura que armazena o resultado da captura de tela na memória.
+// O chamador é responsável por liberar o ponteiro 'dados' com free().
 // ============================================================================
-static int CapturarTela(void) {
+typedef struct {
+    unsigned char *dados;   // Buffer contendo o BMP completo (FileHeader + InfoHeader + Pixels)
+    int tamanho;            // Tamanho total do buffer em bytes
+} ScreenCapture;
+
+// ============================================================================
+// Função que captura a tela inteira e retorna os bytes do BMP na memória.
+// Retorna uma struct ScreenCapture. Se falhar, dados será NULL e tamanho será 0.
+// O chamador DEVE chamar free(resultado.dados) após o uso!
+// ============================================================================
+static ScreenCapture CapturarTela(void) {
+    ScreenCapture resultado = {NULL, 0};
+
     HWND hDesktopWnd = GetDesktopWindow();
     HDC hDesktopDC = GetDC(hDesktopWnd);
-
     HDC hMemoryDC = CreateCompatibleDC(hDesktopDC);
 
     int largura = GetSystemMetrics(SM_CXSCREEN);
@@ -41,37 +52,41 @@ static int CapturarTela(void) {
     // Calcula o tamanho total dos pixels em bytes
     DWORD dwBmpSize = ((largura * bi.biBitCount + 31) / 32) * 4 * altura;
 
-    // Aloca memória global para armazenar os pixels
+    // Aloca memória para os pixels
     HANDLE hDIB = GlobalAlloc(GHND, dwBmpSize);
-    char* lpbitmap = (char*)GlobalLock(hDIB);
+    char *lpbitmap = (char *)GlobalLock(hDIB);
 
-    // Extrai os pixels do bitmap para o buffer de memória
-    GetDIBits(hMemoryDC, hBitmap, 0, altura, lpbitmap, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+    // Extrai os pixels do bitmap para o buffer
+    GetDIBits(hMemoryDC, hBitmap, 0, altura, lpbitmap, (BITMAPINFO *)&bi, DIB_RGB_COLORS);
 
-    // Salva o arquivo BMP no disco
-    HANDLE hFile = CreateFile(TEXT("screenshot.bmp"), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    // Monta o BMP completo na memória (FileHeader + InfoHeader + Pixels)
+    BITMAPFILEHEADER bfh;
+    bfh.bfType = 0x4D42;  // "BM"
+    bfh.bfSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + dwBmpSize;
+    bfh.bfReserved1 = 0;
+    bfh.bfReserved2 = 0;
+    bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
 
-    int sucesso = 0;
+    int tamanhoTotal = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + dwBmpSize;
+    unsigned char *buffer = (unsigned char *)malloc(tamanhoTotal);
 
-    if (hFile != INVALID_HANDLE_VALUE) {
-        BITMAPFILEHEADER bfh;
-        bfh.bfType = 0x4D42;
-        bfh.bfSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + dwBmpSize;
-        bfh.bfReserved1 = 0;
-        bfh.bfReserved2 = 0;
-        bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    if (buffer) {
+        // Copia os 3 blocos sequencialmente no buffer
+        int offset = 0;
 
-        DWORD dwBytesWritten = 0;
+        memcpy(buffer + offset, &bfh, sizeof(BITMAPFILEHEADER));
+        offset += sizeof(BITMAPFILEHEADER);
 
-        WriteFile(hFile, &bfh, sizeof(BITMAPFILEHEADER), &dwBytesWritten, NULL);
-        WriteFile(hFile, &bi, sizeof(BITMAPINFOHEADER), &dwBytesWritten, NULL);
-        WriteFile(hFile, lpbitmap, dwBmpSize, &dwBytesWritten, NULL);
+        memcpy(buffer + offset, &bi, sizeof(BITMAPINFOHEADER));
+        offset += sizeof(BITMAPINFOHEADER);
 
-        CloseHandle(hFile);
-        sucesso = 1;
+        memcpy(buffer + offset, lpbitmap, dwBmpSize);
+
+        resultado.dados = buffer;
+        resultado.tamanho = tamanhoTotal;
     }
 
-    // Limpeza (sempre executa, mesmo se o arquivo falhar)
+    // Limpeza
     GlobalUnlock(hDIB);
     GlobalFree(hDIB);
     SelectObject(hMemoryDC, hOldBitmap);
@@ -79,7 +94,7 @@ static int CapturarTela(void) {
     DeleteObject(hBitmap);
     ReleaseDC(hDesktopWnd, hDesktopDC);
 
-    return sucesso;
+    return resultado;
 }
 
 #endif // TELA_H

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini AnyDesk - Cliente WebSocket</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #00d4ff;
+            margin-bottom: 10px;
+            font-size: 1.5rem;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        button {
+            background: #16213e;
+            color: #00d4ff;
+            border: 1px solid #00d4ff;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: #00d4ff;
+            color: #1a1a2e;
+        }
+
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        button.danger {
+            border-color: #ff4444;
+            color: #ff4444;
+        }
+
+        button.danger:hover {
+            background: #ff4444;
+            color: #fff;
+        }
+
+        button.success {
+            border-color: #00ff88;
+            color: #00ff88;
+        }
+
+        button.success:hover {
+            background: #00ff88;
+            color: #1a1a2e;
+        }
+
+        #status {
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            margin-bottom: 15px;
+        }
+
+        #status.connected {
+            background: rgba(0, 255, 136, 0.15);
+            color: #00ff88;
+            border: 1px solid #00ff88;
+        }
+
+        #status.disconnected {
+            background: rgba(255, 68, 68, 0.15);
+            color: #ff4444;
+            border: 1px solid #ff4444;
+        }
+
+        .viewer {
+            background: #0f0f23;
+            border: 2px solid #333;
+            border-radius: 8px;
+            padding: 10px;
+            max-width: 95vw;
+            overflow: auto;
+        }
+
+        #screenshot {
+            max-width: 100%;
+            display: none;
+            border-radius: 4px;
+        }
+
+        #placeholder {
+            color: #555;
+            text-align: center;
+            padding: 100px 40px;
+            font-size: 1.1rem;
+        }
+
+        .log {
+            margin-top: 15px;
+            width: 100%;
+            max-width: 800px;
+        }
+
+        .log h3 {
+            color: #888;
+            font-size: 0.85rem;
+            margin-bottom: 5px;
+        }
+
+        #messages {
+            background: #0f0f23;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 10px;
+            max-height: 150px;
+            overflow-y: auto;
+            font-family: 'Consolas', monospace;
+            font-size: 0.8rem;
+            color: #aaa;
+        }
+
+        .msg-entry {
+            padding: 2px 0;
+            border-bottom: 1px solid #1a1a2e;
+        }
+
+        .msg-entry.info { color: #00d4ff; }
+        .msg-entry.success { color: #00ff88; }
+        .msg-entry.error { color: #ff4444; }
+    </style>
+</head>
+<body>
+    <h1>🖥️ Mini AnyDesk - Visualizador Remoto</h1>
+
+    <div id="status" class="disconnected">● Desconectado</div>
+
+    <div class="controls">
+        <button id="btnConectar" class="success" onclick="conectar()">Conectar</button>
+        <button id="btnDesconectar" class="danger" onclick="desconectar()" disabled>Desconectar</button>
+        <button id="btnCapturar" onclick="capturarTela()" disabled>📸 Capturar Tela</button>
+        <button id="btnStream" onclick="toggleStream()" disabled>▶️ Iniciar Stream</button>
+    </div>
+
+    <div class="viewer">
+        <p id="placeholder">Conecte ao serviço e clique em "Capturar Tela" para ver o screenshot.</p>
+        <img id="screenshot" alt="Screenshot da tela remota">
+    </div>
+
+    <div class="log">
+        <h3>Log de mensagens:</h3>
+        <div id="messages"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let streaming = false;
+        let streamInterval = null;
+
+        function log(texto, tipo = '') {
+            const div = document.getElementById('messages');
+            const entry = document.createElement('div');
+            entry.className = 'msg-entry ' + tipo;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${texto}`;
+            div.appendChild(entry);
+            div.scrollTop = div.scrollHeight;
+        }
+
+        function conectar() {
+            const porta = 4444;
+            ws = new WebSocket(`ws://localhost:${porta}`);
+            ws.binaryType = 'blob'; // Importante: receber dados binários como Blob
+
+            ws.onopen = function () {
+                document.getElementById('status').className = 'connected';
+                document.getElementById('status').textContent = '● Conectado';
+                document.getElementById('btnConectar').disabled = true;
+                document.getElementById('btnDesconectar').disabled = false;
+                document.getElementById('btnCapturar').disabled = false;
+                document.getElementById('btnStream').disabled = false;
+                log('Conexão WebSocket estabelecida!', 'success');
+            };
+
+            ws.onmessage = function (event) {
+                if (event.data instanceof Blob) {
+                    // Dados binários recebidos = imagem BMP
+                    const url = URL.createObjectURL(event.data);
+                    const img = document.getElementById('screenshot');
+                    
+                    // Libera a URL anterior para não vazar memória
+                    if (img.src && img.src.startsWith('blob:')) {
+                        URL.revokeObjectURL(img.src);
+                    }
+
+                    img.src = url;
+                    img.style.display = 'block';
+                    document.getElementById('placeholder').style.display = 'none';
+                    log(`Screenshot recebido! (${(event.data.size / 1024).toFixed(0)} KB)`, 'success');
+
+                    // Se estiver em modo stream, pede o próximo frame
+                    if (streaming) {
+                        ws.send('CAPTURAR_TELA');
+                    }
+                } else {
+                    // Mensagem de texto normal
+                    log('Servidor: ' + event.data, 'info');
+                }
+            };
+
+            ws.onclose = function () {
+                resetUI();
+                log('Conexão fechada.', 'error');
+            };
+
+            ws.onerror = function () {
+                log('Erro na conexão WebSocket.', 'error');
+            };
+        }
+
+        function desconectar() {
+            if (streaming) toggleStream();
+            if (ws) ws.close();
+        }
+
+        function capturarTela() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('CAPTURAR_TELA');
+                log('Comando CAPTURAR_TELA enviado...', 'info');
+            }
+        }
+
+        function toggleStream() {
+            const btn = document.getElementById('btnStream');
+            if (!streaming) {
+                streaming = true;
+                btn.textContent = '⏹️ Parar Stream';
+                btn.classList.add('danger');
+                log('Stream iniciado! Capturando continuamente...', 'success');
+                // Envia o primeiro pedido, os próximos serão disparados pelo onmessage
+                ws.send('CAPTURAR_TELA');
+            } else {
+                streaming = false;
+                btn.textContent = '▶️ Iniciar Stream';
+                btn.classList.remove('danger');
+                log('Stream parado.', 'info');
+            }
+        }
+
+        function resetUI() {
+            streaming = false;
+            document.getElementById('status').className = 'disconnected';
+            document.getElementById('status').textContent = '● Desconectado';
+            document.getElementById('btnConectar').disabled = false;
+            document.getElementById('btnDesconectar').disabled = true;
+            document.getElementById('btnCapturar').disabled = true;
+            document.getElementById('btnStream').disabled = true;
+            document.getElementById('btnStream').textContent = '▶️ Iniciar Stream';
+        }
+    </script>
+</body>
+</html>

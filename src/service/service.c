@@ -190,9 +190,13 @@ DWORD WINAPI HandleClientThread(LPVOID lpParam) {
             
             // Verifica se o cliente enviou o comando de captura de tela
             if (strcmp((char *)payload, "CAPTURAR_TELA") == 0) {
-                // Executa a captura de tela e salva como screenshot.bmp
-                if (CapturarTela()) {
-                    ws_send_text(ClientSocket, "[SYSTEM] Screenshot capturado com sucesso! Salvo como screenshot.bmp");
+                // Executa a captura de tela e recebe os bytes na memória
+                ScreenCapture captura = CapturarTela();
+                if (captura.dados != NULL) {
+                    // Envia os bytes do BMP como frame binário (opcode 0x02)
+                    ws_send_frame(ClientSocket, WS_OPCODE_BINARY, captura.dados, captura.tamanho);
+                    // Libera a memória alocada pela CapturarTela
+                    free(captura.dados);
                 } else {
                     ws_send_text(ClientSocket, "[SYSTEM] Erro ao capturar a tela.");
                 }

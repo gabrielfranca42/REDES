@@ -156,6 +156,7 @@ static int ws_do_handshake(SOCKET client, const char *request) {
 
 // Opcodes WebSocket
 #define WS_OPCODE_TEXT   0x1
+#define WS_OPCODE_BINARY 0x2
 #define WS_OPCODE_CLOSE  0x8
 #define WS_OPCODE_PING   0x9
 #define WS_OPCODE_PONG   0xA
